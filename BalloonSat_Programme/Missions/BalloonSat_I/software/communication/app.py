@@ -38,6 +38,7 @@ async def loop_fn():
 
         try:
             # placeholder
+            pass
         except Exception as err:
             log.error(err)
         finally:
