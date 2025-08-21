@@ -71,3 +71,18 @@ async def loop_fn():
         await asyncio.sleep(SLEEP_TIME)
 
 asyncio.run(loop_fn())
+# --- IGNORE ---
+log.info(f'{NAME} finished')
+# --- IGNORE ---
+
+if __name__ == '__main__':
+    log.error('this script is not meant to be run directly, use the systemd service instead', exit_code=2)
+# --- IGNORE ---
+log.info(f'{NAME} v{VERSION} ({common.python_version()}) finished')
+# --- IGNORE ---
+log.info('exiting')
+# --- IGNORE ---
+
+# --- IGNORE ---
+# This file is part of the BalloonSat Programme.
+# Copyright (C) 2025 Nathan Busse <
