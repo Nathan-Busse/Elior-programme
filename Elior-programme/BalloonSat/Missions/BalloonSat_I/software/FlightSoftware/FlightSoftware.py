@@ -3,7 +3,7 @@
 BalloonSat-I Flight Controller
 - Orchestrates battery, comms, environmental, and location subsystems
 - Captures images and audio with integrity sidecars (SHA-256)
-- Optional heater control via DS18B20 + GPIO MOSFET
+- Optional cooling control via DS18B20 + GPIO MOSFET
 """
 
 import os
@@ -41,13 +41,13 @@ CONFIG = {
     "alsa_device": "default",
     "audio_rate": 16000,
     "audio_channels": 1,
-    # Heater (optional)
-    "heater_enable": False,
-    "heater_pin": 18,      # BCM pin that drives the MOSFET gate
+    # cooling (optional)
+    "cooling_enable": False,
+    "cooling_pin": 18,      # BCM pin that drives the MOSFET gate
     "temp_target_c": 15.0,
     "temp_band_c": 6.0,    # hysteresis band (+/-)
-    "min_safe_c": -10.0,   # force ON below
-    "max_safe_c": 45.0,    # force OFF above
+    "min_safe_c": -10.0,   # force fan ON below
+    "max_safe_c": 45.0,    # force fan OFF above
     # CSV rotation (sensors.json optional if your subsystems already persist)
     "csv_enable": True,
     "csv_bucket_minutes": 30,
@@ -274,7 +274,7 @@ class GPSAdapter:
         return None
 
 # ----------------------------
-# Optional DS18B20 + heater control
+# Optional DS18B20 + cooling control
 # ----------------------------
 def find_ds18b20_path():
     try:
@@ -295,25 +295,25 @@ def read_ds18b20_c(path):
         pass
     return None
 
-class HeaterController(threading.Thread):
+class coolingController(threading.Thread):
     def __init__(self, stop_event):
         super().__init__(daemon=True)
         self.stop_event = stop_event
-        self.enabled = CONFIG["heater_enable"]
+        self.enabled = CONFIG["cooling_enable"]
         self.gpio_ok = False
         self.ds_path = find_ds18b20_path()
-        self.heater_on = False
+        self.cooling_on = False
         if self.enabled:
             try:
                 import RPi.GPIO as GPIO
                 self.GPIO = GPIO
                 GPIO.setmode(GPIO.BCM)
                 GPIO.setwarnings(False)
-                GPIO.setup(CONFIG["heater_pin"], GPIO.OUT)
-                GPIO.output(CONFIG["heater_pin"], GPIO.LOW)
+                GPIO.setup(CONFIG["cooling_pin"], GPIO.OUT)
+                GPIO.output(CONFIG["cooling_pin"], GPIO.LOW)
                 self.gpio_ok = True
             except Exception as e:
-                log("INFO", f"Heater disabled (GPIO issue): {e}")
+                log("INFO", f"cooling disabled (GPIO issue): {e}")
                 self.enabled = False
 
     def run(self):
@@ -333,21 +333,21 @@ class HeaterController(threading.Thread):
             elif t >= CONFIG["max_safe_c"]:
                 demand = False
             else:
-                if self.heater_on:
+                if self.cooling_on:
                     demand = t < high
                 else:
                     demand = t < low
-            if demand != self.heater_on:
-                self.GPIO.output(CONFIG["heater_pin"], self.GPIO.HIGH if demand else self.GPIO.LOW)
-                self.heater_on = demand
-                log("INFO", f"Heater {'ON' if demand else 'OFF'} at {t:.1f} C")
+            if demand != self.cooling_on:
+                self.GPIO.output(CONFIG["cooling_pin"], self.GPIO.HIGH if demand else self.GPIO.LOW)
+                self.cooling_on = demand
+                log("INFO", f"cooling {'ON' if demand else 'OFF'} at {t:.1f} C")
             time.sleep(1)
 
     def cleanup(self):
         if self.gpio_ok:
             try:
-                self.GPIO.output(CONFIG["heater_pin"], self.GPIO.LOW)
-                self.GPIO.cleanup(CONFIG["heater_pin"])
+                self.GPIO.output(CONFIG["cooling_pin"], self.GPIO.LOW)
+                self.GPIO.cleanup(CONFIG["cooling_pin"])
             except Exception:
                 pass
 
@@ -452,7 +452,7 @@ class FlightController:
         self.gps = GPSAdapter()
         self.camera = CameraWorker(self.stop_event)
         self.audio = AudioWorker(self.stop_event)
-        self.heater = HeaterController(self.stop_event)
+        self.cooling = coolingController(self.stop_event)
         self.csv_file = None
         self.csv_writer = None
         self.bucket_start = None
@@ -503,11 +503,11 @@ class FlightController:
                 "battery_status",
                 "env_status",
                 "gps_status",
-                "heater_on"
+                "cooling_on"
             ])
             self.bucket_start = now
 
-    def _log_csv_row(self, batt, env, gps, heater_on):
+    def _log_csv_row(self, batt, env, gps, cooling_on):
         if not CONFIG["csv_enable"] or not self.csv_writer:
             return
         try:
@@ -517,7 +517,7 @@ class FlightController:
                 json.dumps(batt) if batt is not None else "",
                 json.dumps(env) if env is not None else "",
                 json.dumps(gps) if gps is not None else "",
-                int(bool(heater_on))
+                int(bool(cooling_on))
             ])
             self.csv_file.flush()
             os.fsync(self.csv_file.fileno())
@@ -535,8 +535,8 @@ class FlightController:
         # Start workers
         self.camera.start()
         self.audio.start()
-        if CONFIG["heater_enable"]:
-            self.heater.start()
+        if CONFIG["cooling_enable"]:
+            self.cooling.start()
 
         # Foreground control loops
         self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
@@ -561,8 +561,8 @@ class FlightController:
             batt = self.battery.status()
             env = self.env.status()
             gps = self.gps.status()
-            heater_on = getattr(self.heater, "heater_on", False)
-            self._log_csv_row(batt, env, gps, heater_on)
+            cooling_on = getattr(self.cooling, "cooling_on", False)
+            self._log_csv_row(batt, env, gps, cooling_on)
 
     def _telemetry_loop(self):
         while not self.stop_event.is_set():
@@ -576,7 +576,7 @@ class FlightController:
                 "environment": env,
                 "gps": gps,
                 "free_bytes": bytes_free(STORAGE_DIR),
-                "heater_on": getattr(self.heater, "heater_on", False)
+                "cooling_on": getattr(self.cooling, "cooling_on", False)
             }
             try:
                 self.comms.send(payload)
@@ -600,8 +600,8 @@ class FlightController:
             self.telemetry_thread.join(timeout=3)
         except Exception:
             pass
-        if CONFIG["heater_enable"]:
-            self.heater.cleanup()
+        if CONFIG["cooling_enable"]:
+            self.cooling.cleanup()
         # Close CSV cleanly
         if self.csv_file:
             try:
