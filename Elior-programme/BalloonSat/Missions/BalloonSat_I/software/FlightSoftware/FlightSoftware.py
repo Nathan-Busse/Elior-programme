@@ -4,6 +4,9 @@ BalloonSat-I Flight Controller
 - Orchestrates battery, comms, environmental, and location subsystems
 - Captures images and audio with integrity sidecars (SHA-256)
 - Optional cooling control via DS18B20 + GPIO MOSFET
+
+I decided to repace the mocfet heater with an on-board fan instead.
+The reason for this is because the electronics on board will generate there own hwat.
 """
 
 import os
